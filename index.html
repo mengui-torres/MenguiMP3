@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0f0f14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Practica">
+<title>Practica Batería</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <h1>Practica Batería</h1>
+    <button id="addBtn" class="icon-btn" aria-label="Añadir canciones">＋</button>
+    <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3,.mp3" multiple hidden>
+  </header>
+
+  <main>
+    <section class="player" id="player">
+      <p class="song-title" id="songTitle">Selecciona una canción</p>
+
+      <div class="seek-wrap">
+        <div class="markers">
+          <div id="markerA" class="marker marker-a hidden"></div>
+          <div id="markerB" class="marker marker-b hidden"></div>
+          <div id="loopRange" class="loop-range hidden"></div>
+        </div>
+        <input id="seek" type="range" min="0" max="1000" value="0" step="1" disabled>
+        <div class="times">
+          <span id="curTime">0:00</span>
+          <span id="durTime">0:00</span>
+        </div>
+      </div>
+
+      <div class="transport">
+        <button id="back10" class="transport-btn" disabled>−10</button>
+        <button id="back5" class="transport-btn" disabled>−5</button>
+        <button id="playPause" class="play-btn" disabled aria-label="Reproducir">▶</button>
+        <button id="fwd5" class="transport-btn" disabled>+5</button>
+        <button id="fwd10" class="transport-btn" disabled>+10</button>
+      </div>
+
+      <div class="loop-section">
+        <div class="loop-buttons">
+          <button id="setA" class="loop-btn" disabled>Marcar A</button>
+          <button id="setB" class="loop-btn" disabled>Marcar B</button>
+          <button id="toggleLoop" class="loop-btn loop-toggle" disabled>🔁 Repetir tramo</button>
+          <button id="clearLoop" class="loop-btn ghost" disabled>Borrar tramo</button>
+        </div>
+      </div>
+
+      <div class="speed-section">
+        <div class="speed-header">
+          <span>Velocidad</span>
+          <span id="speedValue">1.00×</span>
+        </div>
+        <input id="speed" type="range" min="50" max="150" value="100" step="5" disabled>
+        <div class="speed-presets">
+          <button class="preset-btn" data-speed="50">0.5×</button>
+          <button class="preset-btn" data-speed="75">0.75×</button>
+          <button class="preset-btn" data-speed="100">1×</button>
+          <button class="preset-btn" data-speed="125">1.25×</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="library">
+      <div class="library-header">
+        <h2>Tus canciones</h2>
+        <span id="libraryEmpty" class="empty-hint">Toca ＋ para añadir MP3s</span>
+      </div>
+      <ul id="songList" class="song-list"></ul>
+    </section>
+  </main>
+
+  <audio id="audio" preload="metadata"></audio>
+</div>
+
+<script src="app.js" defer></script>
+</body>
+</html>

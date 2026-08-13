@@ -48,6 +48,13 @@
 
       <div class="loop-section">
         <div class="loop-buttons">
+          <button id="modeSequential" class="loop-btn loop-toggle" disabled>📃 Reproducir en orden</button>
+          <button id="modeRepeatSong" class="loop-btn loop-toggle" disabled>🔂 Repetir canción</button>
+        </div>
+      </div>
+
+      <div class="loop-section">
+        <div class="loop-buttons">
           <button id="setA" class="loop-btn" disabled>Marcar A</button>
           <button id="setB" class="loop-btn" disabled>Marcar B</button>
           <button id="toggleLoop" class="loop-btn loop-toggle" disabled>🔁 Repetir tramo</button>
@@ -71,8 +78,13 @@
     </section>
 
     <section class="library">
+      <div class="playlist-tabs" id="playlistTabs"></div>
       <div class="library-header">
-        <h2>Tus canciones</h2>
+        <div class="library-title">
+          <h2 id="activePlaylistName">Tus canciones</h2>
+          <button id="renamePlaylistBtn" class="mini-icon-btn" aria-label="Renombrar lista">✎</button>
+          <button id="deletePlaylistBtn" class="mini-icon-btn" aria-label="Eliminar lista">🗑</button>
+        </div>
         <span id="libraryEmpty" class="empty-hint">Toca ＋ para añadir MP3s</span>
       </div>
       <ul id="songList" class="song-list"></ul>

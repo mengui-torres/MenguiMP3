@@ -1,4 +1,4 @@
-const CACHE = "practica-bateria-v1";
+const CACHE = "practica-bateria-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -26,16 +26,16 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  // Network-first: always serve the latest app shell when online, so
+  // pushed updates reach installed PWAs immediately. Falls back to the
+  // cached copy only when offline.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((res) => {
-        if (res.ok && res.type === "basic") {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-        }
-        return res;
-      }).catch(() => cached);
-    })
+    fetch(event.request).then((res) => {
+      if (res.ok && res.type === "basic") {
+        const copy = res.clone();
+        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+      }
+      return res;
+    }).catch(() => caches.match(event.request))
   );
 });

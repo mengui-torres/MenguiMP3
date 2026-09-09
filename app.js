@@ -494,23 +494,26 @@
   }
 
   // ---------- Metronome ----------
-  // iOS Safari ignores <audio>.volume entirely (only the hardware buttons /
-  // silent switch control media volume there), and running the click through
-  // a separate Web Audio graph while the track plays through the plain
-  // <audio> output leaves iOS to mix the two unevenly. Routing the track
-  // itself through Web Audio (via a GainNode we control) fixes both: real
-  // volume control on every platform, and both sounds sharing one output.
   // The track deliberately does NOT go through Web Audio (no
-  // createMediaElementSource). iOS suspends AudioContexts on lock-screen /
-  // backgrounding, and once a media element's output is captured into one,
-  // its sound depends on that context staying alive — killing the
-  // background/lock-screen playback that plain <audio> otherwise gets for
-  // free. The metronome click has its own small, separate AudioContext
-  // instead: it's fine for that one to suspend in the background, since
-  // nobody follows a click track with the screen off.
+  // createMediaElementSource): iOS suspends AudioContexts on lock-screen /
+  // backgrounding, and a media element captured into one depends on that
+  // context staying alive to make any sound — killing the background /
+  // lock-screen playback plain <audio> otherwise gets for free. The click
+  // gets its own separate AudioContext instead: fine for that one to
+  // suspend in the background, since nobody follows a click track with the
+  // screen off.
+  //
+  // Plain AudioContext output also respects the iPhone's hardware mute
+  // (silent) switch, while <audio>/<video> playback ignores it — so with
+  // the switch on, the track stays audible but a raw AudioContext click
+  // goes completely silent. The fix is the same trick apps use: capture
+  // the click's output as a MediaStream and play THAT through a real
+  // (hidden) <audio> element, which inherits the "ignores silent switch"
+  // behavior.
   let clickCtx = null;
   let clickLimiter = null; // self-limiter so the click alone can run hot without distorting
   let clickNoiseBuffer = null;
+  let clickAudioEl = null;
   function ensureClickCtx() {
     if (!clickCtx) {
       clickCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -521,7 +524,15 @@
       clickLimiter.ratio.value = 15;
       clickLimiter.attack.value = 0.002;
       clickLimiter.release.value = 0.08;
-      clickLimiter.connect(clickCtx.destination);
+
+      const streamDest = clickCtx.createMediaStreamDestination();
+      clickLimiter.connect(streamDest);
+      clickAudioEl = new Audio();
+      clickAudioEl.srcObject = streamDest.stream;
+      clickAudioEl.setAttribute("playsinline", "");
+      clickAudioEl.style.display = "none";
+      document.body.appendChild(clickAudioEl);
+      clickAudioEl.play().catch(() => {});
 
       const bufferSize = Math.round(clickCtx.sampleRate * 0.03);
       clickNoiseBuffer = clickCtx.createBuffer(1, bufferSize, clickCtx.sampleRate);
@@ -529,6 +540,7 @@
       for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
     }
     if (clickCtx.state === "suspended") clickCtx.resume();
+    if (clickAudioEl && clickAudioEl.paused) clickAudioEl.play().catch(() => {});
     return clickCtx;
   }
 

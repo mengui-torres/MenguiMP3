@@ -189,6 +189,12 @@
     loopB: null,
     loopEnabled: false,
     playMode: "none", // "none" | "sequential" | "repeatSong"
+    metro: {
+      enabled: false,
+      bpm: null,
+      beatsPerMeasure: 4,
+      tapTimes: [],
+    },
   };
 
   // ---------- DOM ----------
@@ -215,6 +221,11 @@
     modeRepeatSong: document.getElementById("modeRepeatSong"),
     speed: document.getElementById("speed"),
     speedValue: document.getElementById("speedValue"),
+    metroToggle: document.getElementById("metroToggle"),
+    metroTap: document.getElementById("metroTap"),
+    metroBpmDown: document.getElementById("metroBpmDown"),
+    metroBpmUp: document.getElementById("metroBpmUp"),
+    metroBpmValue: document.getElementById("metroBpmValue"),
     playlistTabs: document.getElementById("playlistTabs"),
     activePlaylistName: document.getElementById("activePlaylistName"),
     renamePlaylistBtn: document.getElementById("renamePlaylistBtn"),
@@ -227,6 +238,7 @@
   const playerControls = [
     el.seek, el.back10, el.back5, el.fwd5, el.fwd10, el.playPause,
     el.setA, el.setB, el.speed, el.modeSequential, el.modeRepeatSong,
+    el.metroTap, ...document.querySelectorAll(".ts-btn"),
   ];
 
   function formatTime(sec) {
@@ -400,6 +412,7 @@
     el.clearLoop.disabled = true;
     el.playPause.textContent = "▶";
     updateLoopUI();
+    resetMetro();
   }
 
   function loadSong(song) {
@@ -409,6 +422,9 @@
     state.loopA = null;
     state.loopB = null;
     state.loopEnabled = false;
+    state.metro.enabled = false;
+    state.metro.bpm = null;
+    state.metro.tapTimes = [];
     state.objectUrl = URL.createObjectURL(song.blob);
     el.audio.src = state.objectUrl;
     setPreservesPitch(el.audio);
@@ -420,6 +436,7 @@
     el.clearLoop.disabled = true;
     updateLoopUI();
     updateModeUI();
+    updateMetroUI();
 
     el.audio.play().catch(() => {});
     [...el.songList.children].forEach((li) => {
@@ -463,6 +480,73 @@
   function updateModeUI() {
     el.modeSequential.classList.toggle("active", state.playMode === "sequential");
     el.modeRepeatSong.classList.toggle("active", state.playMode === "repeatSong");
+  }
+
+  // ---------- Metronome ----------
+  let audioCtx = null;
+  function ensureAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+
+  function playClick(accent) {
+    const ctx = ensureAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = accent ? 1500 : 1000;
+    gain.gain.setValueAtTime(accent ? 0.35 : 0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.06);
+  }
+
+  let metroNextClickTime = 0;
+  let metroBeatCounter = 0;
+
+  function resyncMetro() {
+    if (state.metro.bpm == null) return;
+    metroNextClickTime = el.audio.currentTime + 60 / state.metro.bpm;
+    metroBeatCounter = 0;
+  }
+
+  function resetMetro() {
+    state.metro.enabled = false;
+    state.metro.bpm = null;
+    state.metro.tapTimes = [];
+    updateMetroUI();
+  }
+
+  function updateMetroUI() {
+    const hasBpm = state.metro.bpm != null;
+    el.metroToggle.disabled = !hasBpm;
+    el.metroBpmDown.disabled = !hasBpm;
+    el.metroBpmUp.disabled = !hasBpm;
+    el.metroToggle.textContent = state.metro.enabled ? "🔊 Encendido" : "🔈 Apagado";
+    el.metroToggle.classList.toggle("active", state.metro.enabled);
+    el.metroBpmValue.textContent = hasBpm
+      ? state.metro.bpm.toFixed(1).replace(/\.0$/, "") + " BPM"
+      : "— BPM";
+    document.querySelectorAll(".ts-btn").forEach((btn) => {
+      btn.classList.toggle("active", Number(btn.dataset.beats) === state.metro.beatsPerMeasure);
+    });
+  }
+
+  function metroTick() {
+    requestAnimationFrame(metroTick);
+    if (!state.metro.enabled || state.metro.bpm == null || el.audio.paused) return;
+    const interval = 60 / state.metro.bpm;
+    if (el.audio.currentTime >= metroNextClickTime) {
+      playClick(metroBeatCounter % state.metro.beatsPerMeasure === 0);
+      metroBeatCounter++;
+      metroNextClickTime += interval;
+      // if we've fallen far behind (e.g. tab was backgrounded), catch up
+      // without firing a burst of clicks
+      if (el.audio.currentTime - metroNextClickTime > interval) {
+        metroNextClickTime = el.audio.currentTime + interval;
+      }
+    }
   }
 
   // ---------- Events: file input ----------
@@ -512,6 +596,11 @@
     el.durTime.textContent = formatTime(el.audio.duration);
     updateLoopUI();
   });
+
+  // Any discontinuity in playback position (seek bar, skip buttons, the
+  // A-B loop jumping back to A) fires "seeked" — resync the metronome
+  // grid to it so it doesn't click through the jump.
+  el.audio.addEventListener("seeked", resyncMetro);
 
   let seeking = false;
   el.seek.addEventListener("input", () => {
@@ -567,6 +656,61 @@
     updateModeUI();
   });
 
+  // ---------- Events: metronome ----------
+  el.metroTap.addEventListener("click", () => {
+    ensureAudioCtx();
+    const t = el.audio.currentTime;
+    const taps = state.metro.tapTimes;
+
+    // Stale gap (paused a while, or seeked) — start a fresh tap sequence.
+    if (taps.length && (t - taps[taps.length - 1] <= 0 || t - taps[taps.length - 1] > 2.5)) {
+      taps.length = 0;
+    }
+    taps.push(t);
+    if (taps.length > 8) taps.shift();
+
+    if (taps.length >= 2) {
+      const intervals = [];
+      for (let i = 1; i < taps.length; i++) intervals.push(taps[i] - taps[i - 1]);
+      const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      const bpm = Math.round((60 / avgInterval) * 10) / 10;
+      if (bpm >= 20 && bpm <= 300) {
+        state.metro.bpm = bpm;
+        // The most recent tap becomes the next accent — gives an
+        // immediate confirmation click right on the beat you tapped.
+        metroNextClickTime = t;
+        metroBeatCounter = 0;
+      }
+    }
+    updateMetroUI();
+  });
+
+  el.metroToggle.addEventListener("click", () => {
+    state.metro.enabled = !state.metro.enabled;
+    if (state.metro.enabled) {
+      ensureAudioCtx();
+      resyncMetro();
+    }
+    updateMetroUI();
+  });
+
+  function nudgeBpm(delta) {
+    if (state.metro.bpm == null) return;
+    state.metro.bpm = Math.max(20, Math.min(300, Math.round((state.metro.bpm + delta) * 10) / 10));
+    resyncMetro();
+    updateMetroUI();
+  }
+  el.metroBpmDown.addEventListener("click", () => nudgeBpm(-1));
+  el.metroBpmUp.addEventListener("click", () => nudgeBpm(1));
+
+  document.querySelectorAll(".ts-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.metro.beatsPerMeasure = Number(btn.dataset.beats);
+      resyncMetro();
+      updateMetroUI();
+    });
+  });
+
   // ---------- Events: speed ----------
   function applySpeed(raw) {
     const rate = raw / 100;
@@ -575,7 +719,7 @@
     el.speedValue.textContent = rate.toFixed(2) + "×";
   }
   el.speed.addEventListener("input", () => applySpeed(Number(el.speed.value)));
-  document.querySelectorAll(".preset-btn").forEach((btn) => {
+  document.querySelectorAll(".speed-presets .preset-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const v = Number(btn.dataset.speed);
       el.speed.value = String(v);
@@ -587,6 +731,7 @@
   async function init() {
     resetPlayer();
     updateModeUI();
+    requestAnimationFrame(metroTick);
     state.playlists = await getAllPlaylists();
     state.activePlaylistId = state.playlists[0].id;
     await renderPlaylistTabs();

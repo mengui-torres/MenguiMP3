@@ -254,6 +254,99 @@ input[type="range"]:disabled { opacity: 0.4; }
 
 .preset-btn:active { background: #2c2c38; }
 
+.preset-btn.active {
+  background: var(--accent);
+  color: white;
+}
+
+.metro-section { margin-top: 20px; }
+
+.metro-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.metro-header span {
+  font-size: 14px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.metro-header .loop-toggle {
+  padding: 8px 14px;
+}
+
+.metro-bpm-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.metro-tap-btn {
+  flex: 1;
+  height: 56px;
+  border-radius: 14px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.metro-tap-btn:active { background: var(--accent-2); }
+.metro-tap-btn:disabled { opacity: 0.35; background: var(--card-2); color: var(--text-dim); }
+
+.metro-bpm-display {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+#metroBpmValue {
+  min-width: 72px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.metro-nudge {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--card-2);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.metro-nudge:active { background: #2c2c38; }
+.metro-nudge:disabled { opacity: 0.35; }
+
+.metro-timesig-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.metro-timesig-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.metro-timesig-buttons {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+
 .playlist-tabs {
   display: flex;
   gap: 8px;

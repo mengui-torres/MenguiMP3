@@ -268,6 +268,12 @@ input[type="range"]:disabled { opacity: 0.4; }
   margin-bottom: 12px;
 }
 
+.metro-header-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .metro-header span {
   font-size: 14px;
   color: var(--text-dim);
@@ -328,6 +334,11 @@ input[type="range"]:disabled { opacity: 0.4; }
 
 .metro-nudge:active { background: #2c2c38; }
 .metro-nudge:disabled { opacity: 0.35; }
+
+.metro-nudge.active {
+  background: var(--accent);
+  color: white;
+}
 
 .metro-timesig-row {
   display: flex;

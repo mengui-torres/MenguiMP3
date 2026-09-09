@@ -79,7 +79,10 @@
       <div class="metro-section">
         <div class="metro-header">
           <span>🥁 Metrónomo</span>
-          <button id="metroToggle" class="loop-btn loop-toggle" disabled>🔈 Apagado</button>
+          <div class="metro-header-buttons">
+            <button id="metroMute" class="metro-nudge" disabled aria-label="Silenciar clic">🔊</button>
+            <button id="metroToggle" class="loop-btn loop-toggle" disabled>🔈 Apagado</button>
+          </div>
         </div>
         <div class="metro-bpm-row">
           <button id="metroTap" class="metro-tap-btn" disabled>TAP</button>
@@ -109,8 +112,8 @@
           </div>
           <div class="volume-control">
             <span class="volume-label">🥁 Clic</span>
-            <input id="clickVolume" type="range" min="0" max="100" value="80" disabled>
-            <span id="clickVolumeValue" class="volume-value">80%</span>
+            <input id="clickVolume" type="range" min="0" max="100" value="90" disabled>
+            <span id="clickVolumeValue" class="volume-value">90%</span>
           </div>
         </div>
       </div>

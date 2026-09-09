@@ -192,10 +192,11 @@
     trackVolume: 1,
     metro: {
       enabled: false,
+      muted: false,
       bpm: null,
       beatsPerMeasure: 4,
       tapTimes: [],
-      clickVolume: 0.8,
+      clickVolume: 0.9,
     },
   };
 
@@ -224,6 +225,7 @@
     speed: document.getElementById("speed"),
     speedValue: document.getElementById("speedValue"),
     metroToggle: document.getElementById("metroToggle"),
+    metroMute: document.getElementById("metroMute"),
     metroTap: document.getElementById("metroTap"),
     metroBpmDown: document.getElementById("metroBpmDown"),
     metroBpmUp: document.getElementById("metroBpmUp"),
@@ -431,6 +433,7 @@
     state.loopB = null;
     state.loopEnabled = false;
     state.metro.enabled = false;
+    state.metro.muted = false;
     state.metro.bpm = null;
     state.metro.tapTimes = [];
     state.objectUrl = URL.createObjectURL(song.blob);
@@ -499,6 +502,7 @@
   // volume control on every platform, and both sounds sharing one output.
   let audioCtx = null;
   let trackGain = null;
+  let clickNoiseBuffer = null;
   function ensureAudioCtx() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -506,36 +510,66 @@
       trackGain = audioCtx.createGain();
       trackGain.gain.value = state.trackVolume;
       trackSource.connect(trackGain).connect(audioCtx.destination);
+
+      // A short burst of filtered noise reads as a percussive "tick" that
+      // cuts through a full mix; a pure tone (the previous approach) has
+      // all its energy at one frequency and gets buried under real music.
+      const bufferSize = Math.round(audioCtx.sampleRate * 0.05);
+      clickNoiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = clickNoiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
     }
     if (audioCtx.state === "suspended") audioCtx.resume();
     return audioCtx;
   }
 
   function playClick(accent) {
-    if (state.metro.clickVolume <= 0) return;
+    if (state.metro.clickVolume <= 0 || state.metro.muted) return;
     const ctx = ensureAudioCtx();
-    const osc = ctx.createOscillator();
+    const now = ctx.currentTime;
+    const duration = 0.035;
+    const peak = (accent ? 1 : 0.7) * state.metro.clickVolume;
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = clickNoiseBuffer;
+
+    const bandpass = ctx.createBiquadFilter();
+    bandpass.type = "bandpass";
+    bandpass.frequency.value = accent ? 2400 : 1600;
+    bandpass.Q.value = 1;
+
     const gain = ctx.createGain();
-    osc.frequency.value = accent ? 1500 : 1000;
-    const peak = (accent ? 0.9 : 0.6) * state.metro.clickVolume;
-    gain.gain.setValueAtTime(peak, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.06);
+    gain.gain.setValueAtTime(peak, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    noise.connect(bandpass).connect(gain).connect(ctx.destination);
+    noise.start(now);
+    noise.stop(now + duration);
   }
 
   let metroNextClickTime = 0;
   let metroBeatCounter = 0;
 
+  // Used after a seek/skip/loop-jump: pick up the click grid one beat from
+  // now, so it doesn't fire a burst of "missed" clicks for the gap just jumped.
   function resyncMetro() {
     if (state.metro.bpm == null) return;
     metroNextClickTime = el.audio.currentTime + 60 / state.metro.bpm;
     metroBeatCounter = 0;
   }
 
+  // Used for a deliberate "land the click right here" gesture (tap tempo's
+  // last tap, or un-muting): fires on the very next scheduler pass instead
+  // of waiting a full beat, so the click confirms audibly at that instant.
+  function alignMetroNow() {
+    if (state.metro.bpm == null) return;
+    metroNextClickTime = el.audio.currentTime;
+    metroBeatCounter = 0;
+  }
+
   function resetMetro() {
     state.metro.enabled = false;
+    state.metro.muted = false;
     state.metro.bpm = null;
     state.metro.tapTimes = [];
     updateMetroUI();
@@ -544,10 +578,13 @@
   function updateMetroUI() {
     const hasBpm = state.metro.bpm != null;
     el.metroToggle.disabled = !hasBpm;
+    el.metroMute.disabled = !hasBpm;
     el.metroBpmDown.disabled = !hasBpm;
     el.metroBpmUp.disabled = !hasBpm;
     el.metroToggle.textContent = state.metro.enabled ? "🔊 Encendido" : "🔈 Apagado";
     el.metroToggle.classList.toggle("active", state.metro.enabled);
+    el.metroMute.textContent = state.metro.muted ? "🔇" : "🔊";
+    el.metroMute.classList.toggle("active", !state.metro.muted);
     el.metroBpmValue.textContent = hasBpm
       ? state.metro.bpm.toFixed(1).replace(/\.0$/, "") + " BPM"
       : "— BPM";
@@ -701,8 +738,7 @@
         state.metro.bpm = bpm;
         // The most recent tap becomes the next accent — gives an
         // immediate confirmation click right on the beat you tapped.
-        metroNextClickTime = t;
-        metroBeatCounter = 0;
+        alignMetroNow();
       }
     }
     updateMetroUI();
@@ -717,9 +753,22 @@
     updateMetroUI();
   });
 
+  // Mute doesn't stop the metronome's internal clock — it keeps counting
+  // beats silently. Un-muting lands the click on the exact instant you
+  // release it, so you can bring it in by ear against the real song
+  // instead of fighting tap-tempo's reaction-time lag.
+  el.metroMute.addEventListener("click", () => {
+    state.metro.muted = !state.metro.muted;
+    if (!state.metro.muted) alignMetroNow();
+    updateMetroUI();
+  });
+
+  // Whole-BPM steps only: tap tempo can leave an odd decimal (e.g. 118.3),
+  // and fiddling with tenths doesn't help find the real tempo. Each press
+  // snaps to a clean integer and moves it by one.
   function nudgeBpm(delta) {
     if (state.metro.bpm == null) return;
-    state.metro.bpm = Math.max(20, Math.min(300, Math.round((state.metro.bpm + delta) * 10) / 10));
+    state.metro.bpm = Math.max(20, Math.min(300, Math.round(state.metro.bpm) + delta));
     resyncMetro();
     updateMetroUI();
   }

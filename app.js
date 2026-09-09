@@ -494,75 +494,90 @@
   }
 
   // ---------- Metronome ----------
-  // The track deliberately does NOT go through Web Audio (no
-  // createMediaElementSource): iOS suspends AudioContexts on lock-screen /
-  // backgrounding, and a media element captured into one depends on that
-  // context staying alive to make any sound — killing the background /
-  // lock-screen playback plain <audio> otherwise gets for free. The click
-  // gets its own separate AudioContext instead: fine for that one to
-  // suspend in the background, since nobody follows a click track with the
-  // screen off.
-  //
-  // Plain AudioContext output also respects the iPhone's hardware mute
-  // (silent) switch, while <audio>/<video> playback ignores it — so with
-  // the switch on, the track stays audible but a raw AudioContext click
-  // goes completely silent. The fix is the same trick apps use: capture
-  // the click's output as a MediaStream and play THAT through a real
-  // (hidden) <audio> element, which inherits the "ignores silent switch"
-  // behavior.
-  // No limiter/compressor on this path on purpose: a heavy one flattens
-  // most of the volume slider's range (everything above its threshold
-  // ends up sounding about the same loudness). Each click's own gain
-  // node is capped at 1.0 so it never distorts itself, and that's it.
-  let clickCtx = null;
-  let clickStreamDest = null;
-  let clickNoiseBuffer = null;
-  let clickAudioEl = null;
-  function ensureClickCtx() {
-    if (!clickCtx) {
-      clickCtx = new (window.AudioContext || window.webkitAudioContext)();
-      clickStreamDest = clickCtx.createMediaStreamDestination();
-      clickAudioEl = new Audio();
-      clickAudioEl.srcObject = clickStreamDest.stream;
-      clickAudioEl.setAttribute("playsinline", "");
-      clickAudioEl.style.display = "none";
-      document.body.appendChild(clickAudioEl);
-      clickAudioEl.play().catch(() => {});
+  // The click plays as a real, tiny pre-rendered WAV file through a plain
+  // <audio> element — the exact same mechanism the track itself uses —
+  // instead of raw Web Audio API output. Two earlier approaches both had
+  // real problems on iOS: a plain AudioContext goes silent when the
+  // hardware mute switch is on (while <audio> ignores it), and piping it
+  // through a live MediaStream into a hidden <audio> element to work
+  // around that turned out to drop/garble clicks unreliably. Baking the
+  // click into an actual audio file sidesteps both: it's just <audio>
+  // playback, proven reliable by the track itself.
+  const CLICK_SAMPLE_RATE = 44100;
+  const CLICK_DURATION = 0.025;
+  let clickUrls = { accent: null, normal: null };
 
-      const bufferSize = Math.round(clickCtx.sampleRate * 0.03);
-      clickNoiseBuffer = clickCtx.createBuffer(1, bufferSize, clickCtx.sampleRate);
-      const data = clickNoiseBuffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+  // Synthesizes one click as raw samples: a broadband highpassed-noise
+  // "snap" (cuts through a mix) layered with a short decaying low sine
+  // "thump" (gives it physical punch instead of sounding thin/clappy).
+  function synthesizeClick(peakAmplitude, snapFreq, thumpFreq) {
+    const n = Math.round(CLICK_SAMPLE_RATE * CLICK_DURATION);
+    const out = new Float32Array(n);
+
+    const a = Math.exp((-2 * Math.PI * snapFreq) / CLICK_SAMPLE_RATE);
+    let prevX = 0, prevY = 0;
+    for (let i = 0; i < n; i++) {
+      const x = Math.random() * 2 - 1;
+      const y = x - prevX + a * prevY;
+      prevX = x;
+      prevY = y;
+      out[i] = y * 0.7;
     }
-    if (clickCtx.state === "suspended") clickCtx.resume();
-    if (clickAudioEl && clickAudioEl.paused) clickAudioEl.play().catch(() => {});
-    return clickCtx;
+
+    for (let i = 0; i < n; i++) {
+      const t = i / CLICK_SAMPLE_RATE;
+      out[i] += Math.sin(2 * Math.PI * thumpFreq * t) * Math.exp(-t * 400) * 0.6;
+    }
+
+    let peak = 0;
+    for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(out[i]));
+    const norm = peak > 0 ? 1 / peak : 1;
+    for (let i = 0; i < n; i++) {
+      const envelope = Math.exp(-9 * (i / n));
+      out[i] = out[i] * norm * envelope * peakAmplitude;
+    }
+    return out;
+  }
+
+  function samplesToWavUrl(samples) {
+    const n = samples.length;
+    const buffer = new ArrayBuffer(44 + n * 2);
+    const view = new DataView(buffer);
+    const writeStr = (offset, str) => {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    };
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + n * 2, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, CLICK_SAMPLE_RATE, true);
+    view.setUint32(28, CLICK_SAMPLE_RATE * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(44 + i * 2, s < 0 ? s * 32768 : s * 32767, true);
+    }
+    return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+  }
+
+  function regenerateClickSounds() {
+    if (clickUrls.accent) URL.revokeObjectURL(clickUrls.accent);
+    if (clickUrls.normal) URL.revokeObjectURL(clickUrls.normal);
+    clickUrls.accent = samplesToWavUrl(synthesizeClick(state.metro.clickVolume, 2200, 190));
+    clickUrls.normal = samplesToWavUrl(synthesizeClick(state.metro.clickVolume * 0.85, 1600, 150));
   }
 
   function playClick(accent) {
     if (state.metro.clickVolume <= 0 || state.metro.muted) return;
-    const ctx = ensureClickCtx();
-    const now = ctx.currentTime;
-    const duration = 0.018;
-    const peak = (accent ? 1 : 0.7) * state.metro.clickVolume;
-
-    const noise = ctx.createBufferSource();
-    noise.buffer = clickNoiseBuffer;
-
-    // Highpass, not bandpass: keeps the click broadband ("snap") rather
-    // than a narrow tone, so some part of its energy always pokes through
-    // whatever the song's own spectrum is doing at that instant.
-    const highpass = ctx.createBiquadFilter();
-    highpass.type = "highpass";
-    highpass.frequency.value = accent ? 2200 : 1400;
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(peak, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-
-    noise.connect(highpass).connect(gain).connect(clickStreamDest);
-    noise.start(now);
-    noise.stop(now + duration);
+    if (!clickUrls.accent) regenerateClickSounds();
+    const url = accent ? clickUrls.accent : clickUrls.normal;
+    new Audio(url).play().catch(() => {});
   }
 
   let metroNextClickTime = 0;
@@ -736,7 +751,7 @@
 
   // ---------- Events: metronome ----------
   el.metroTap.addEventListener("click", () => {
-    ensureClickCtx();
+    if (!clickUrls.accent) regenerateClickSounds();
     const t = el.audio.currentTime;
     const taps = state.metro.tapTimes;
 
@@ -765,7 +780,7 @@
   el.metroToggle.addEventListener("click", () => {
     state.metro.enabled = !state.metro.enabled;
     if (state.metro.enabled) {
-      ensureClickCtx();
+      if (!clickUrls.accent) regenerateClickSounds();
       resyncMetro();
     }
     updateMetroUI();
@@ -810,6 +825,9 @@
   el.clickVolume.addEventListener("input", () => {
     state.metro.clickVolume = Number(el.clickVolume.value) / 100;
     el.clickVolumeValue.textContent = el.clickVolume.value + "%";
+    // The volume is baked into the click's samples (no .volume control on
+    // iOS), so re-render it whenever the slider moves.
+    if (clickUrls.accent) regenerateClickSounds();
   });
 
   // ---------- Events: speed ----------

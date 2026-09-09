@@ -510,25 +510,20 @@
   // the click's output as a MediaStream and play THAT through a real
   // (hidden) <audio> element, which inherits the "ignores silent switch"
   // behavior.
+  // No limiter/compressor on this path on purpose: a heavy one flattens
+  // most of the volume slider's range (everything above its threshold
+  // ends up sounding about the same loudness). Each click's own gain
+  // node is capped at 1.0 so it never distorts itself, and that's it.
   let clickCtx = null;
-  let clickLimiter = null; // self-limiter so the click alone can run hot without distorting
+  let clickStreamDest = null;
   let clickNoiseBuffer = null;
   let clickAudioEl = null;
   function ensureClickCtx() {
     if (!clickCtx) {
       clickCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-      clickLimiter = clickCtx.createDynamicsCompressor();
-      clickLimiter.threshold.value = -6;
-      clickLimiter.knee.value = 4;
-      clickLimiter.ratio.value = 15;
-      clickLimiter.attack.value = 0.002;
-      clickLimiter.release.value = 0.08;
-
-      const streamDest = clickCtx.createMediaStreamDestination();
-      clickLimiter.connect(streamDest);
+      clickStreamDest = clickCtx.createMediaStreamDestination();
       clickAudioEl = new Audio();
-      clickAudioEl.srcObject = streamDest.stream;
+      clickAudioEl.srcObject = clickStreamDest.stream;
       clickAudioEl.setAttribute("playsinline", "");
       clickAudioEl.style.display = "none";
       document.body.appendChild(clickAudioEl);
@@ -549,7 +544,7 @@
     const ctx = ensureClickCtx();
     const now = ctx.currentTime;
     const duration = 0.018;
-    const peak = (accent ? 2.2 : 1.5) * state.metro.clickVolume;
+    const peak = (accent ? 1 : 0.7) * state.metro.clickVolume;
 
     const noise = ctx.createBufferSource();
     noise.buffer = clickNoiseBuffer;
@@ -565,7 +560,7 @@
     gain.gain.setValueAtTime(peak, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
-    noise.connect(highpass).connect(gain).connect(clickLimiter);
+    noise.connect(highpass).connect(gain).connect(clickStreamDest);
     noise.start(now);
     noise.stop(now + duration);
   }

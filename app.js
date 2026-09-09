@@ -425,7 +425,6 @@
   }
 
   function loadSong(song) {
-    ensureAudioCtx(); // called from a tap, so this also unlocks audio on iOS
     if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
     state.currentId = song.id;
     state.currentPlaylistId = song.playlistId;
@@ -440,6 +439,7 @@
     el.audio.src = state.objectUrl;
     setPreservesPitch(el.audio);
     el.audio.playbackRate = Number(el.speed.value) / 100;
+    el.audio.volume = state.trackVolume; // no-op on iOS (see note above); works elsewhere
     el.songTitle.textContent = song.name;
 
     playerControls.forEach((c) => (c.disabled = false));
@@ -500,66 +500,60 @@
   // <audio> output leaves iOS to mix the two unevenly. Routing the track
   // itself through Web Audio (via a GainNode we control) fixes both: real
   // volume control on every platform, and both sounds sharing one output.
-  let audioCtx = null;
-  let trackGain = null;
-  let masterBus = null; // shared compressor both track and click pass through
+  // The track deliberately does NOT go through Web Audio (no
+  // createMediaElementSource). iOS suspends AudioContexts on lock-screen /
+  // backgrounding, and once a media element's output is captured into one,
+  // its sound depends on that context staying alive — killing the
+  // background/lock-screen playback that plain <audio> otherwise gets for
+  // free. The metronome click has its own small, separate AudioContext
+  // instead: it's fine for that one to suspend in the background, since
+  // nobody follows a click track with the screen off.
+  let clickCtx = null;
+  let clickLimiter = null; // self-limiter so the click alone can run hot without distorting
   let clickNoiseBuffer = null;
-  function ensureAudioCtx() {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  function ensureClickCtx() {
+    if (!clickCtx) {
+      clickCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-      // A limiter on the shared output lets the click hit much harder than
-      // unity gain without clipping — it also makes the track duck ever so
-      // slightly at the exact instant of each click (like a sidechain),
-      // which is what actually makes a click cut through a full mix.
-      masterBus = audioCtx.createDynamicsCompressor();
-      masterBus.threshold.value = -8;
-      masterBus.knee.value = 6;
-      masterBus.ratio.value = 12;
-      masterBus.attack.value = 0.003;
-      masterBus.release.value = 0.15;
-      masterBus.connect(audioCtx.destination);
+      clickLimiter = clickCtx.createDynamicsCompressor();
+      clickLimiter.threshold.value = -6;
+      clickLimiter.knee.value = 4;
+      clickLimiter.ratio.value = 15;
+      clickLimiter.attack.value = 0.002;
+      clickLimiter.release.value = 0.08;
+      clickLimiter.connect(clickCtx.destination);
 
-      const trackSource = audioCtx.createMediaElementSource(el.audio);
-      trackGain = audioCtx.createGain();
-      trackGain.gain.value = state.trackVolume;
-      trackSource.connect(trackGain).connect(masterBus);
-
-      // A short burst of filtered noise reads as a percussive "tick" that
-      // cuts through a full mix; a pure tone (the previous approach) has
-      // all its energy at one frequency and gets buried under real music.
-      const bufferSize = Math.round(audioCtx.sampleRate * 0.06);
-      clickNoiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const bufferSize = Math.round(clickCtx.sampleRate * 0.03);
+      clickNoiseBuffer = clickCtx.createBuffer(1, bufferSize, clickCtx.sampleRate);
       const data = clickNoiseBuffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
     }
-    if (audioCtx.state === "suspended") audioCtx.resume();
-    return audioCtx;
+    if (clickCtx.state === "suspended") clickCtx.resume();
+    return clickCtx;
   }
 
   function playClick(accent) {
     if (state.metro.clickVolume <= 0 || state.metro.muted) return;
-    const ctx = ensureAudioCtx();
+    const ctx = ensureClickCtx();
     const now = ctx.currentTime;
-    const duration = 0.045;
-    // Above unity on purpose — the limiter on masterBus catches it, and a
-    // sharper, higher-pitched click (little musical content lives up here)
-    // cuts through far better than a lower, gentler one.
-    const peak = (accent ? 1.8 : 1.2) * state.metro.clickVolume;
+    const duration = 0.018;
+    const peak = (accent ? 2.2 : 1.5) * state.metro.clickVolume;
 
     const noise = ctx.createBufferSource();
     noise.buffer = clickNoiseBuffer;
 
-    const bandpass = ctx.createBiquadFilter();
-    bandpass.type = "bandpass";
-    bandpass.frequency.value = accent ? 5200 : 3600;
-    bandpass.Q.value = 2.5;
+    // Highpass, not bandpass: keeps the click broadband ("snap") rather
+    // than a narrow tone, so some part of its energy always pokes through
+    // whatever the song's own spectrum is doing at that instant.
+    const highpass = ctx.createBiquadFilter();
+    highpass.type = "highpass";
+    highpass.frequency.value = accent ? 2200 : 1400;
 
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(peak, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
-    noise.connect(bandpass).connect(gain).connect(masterBus);
+    noise.connect(highpass).connect(gain).connect(clickLimiter);
     noise.start(now);
     noise.stop(now + duration);
   }
@@ -735,7 +729,7 @@
 
   // ---------- Events: metronome ----------
   el.metroTap.addEventListener("click", () => {
-    ensureAudioCtx();
+    ensureClickCtx();
     const t = el.audio.currentTime;
     const taps = state.metro.tapTimes;
 
@@ -764,7 +758,7 @@
   el.metroToggle.addEventListener("click", () => {
     state.metro.enabled = !state.metro.enabled;
     if (state.metro.enabled) {
-      ensureAudioCtx();
+      ensureClickCtx();
       resyncMetro();
     }
     updateMetroUI();
@@ -802,7 +796,7 @@
 
   el.trackVolume.addEventListener("input", () => {
     state.trackVolume = Number(el.trackVolume.value) / 100;
-    if (trackGain) trackGain.gain.value = state.trackVolume;
+    el.audio.volume = state.trackVolume; // no-op on iOS; works on desktop/Android
     el.trackVolumeValue.textContent = el.trackVolume.value + "%";
   });
 

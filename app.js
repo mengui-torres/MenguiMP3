@@ -423,6 +423,7 @@
   }
 
   function loadSong(song) {
+    ensureAudioCtx(); // called from a tap, so this also unlocks audio on iOS
     if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
     state.currentId = song.id;
     state.currentPlaylistId = song.playlistId;
@@ -436,7 +437,6 @@
     el.audio.src = state.objectUrl;
     setPreservesPitch(el.audio);
     el.audio.playbackRate = Number(el.speed.value) / 100;
-    el.audio.volume = state.trackVolume;
     el.songTitle.textContent = song.name;
 
     playerControls.forEach((c) => (c.disabled = false));
@@ -491,9 +491,22 @@
   }
 
   // ---------- Metronome ----------
+  // iOS Safari ignores <audio>.volume entirely (only the hardware buttons /
+  // silent switch control media volume there), and running the click through
+  // a separate Web Audio graph while the track plays through the plain
+  // <audio> output leaves iOS to mix the two unevenly. Routing the track
+  // itself through Web Audio (via a GainNode we control) fixes both: real
+  // volume control on every platform, and both sounds sharing one output.
   let audioCtx = null;
+  let trackGain = null;
   function ensureAudioCtx() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const trackSource = audioCtx.createMediaElementSource(el.audio);
+      trackGain = audioCtx.createGain();
+      trackGain.gain.value = state.trackVolume;
+      trackSource.connect(trackGain).connect(audioCtx.destination);
+    }
     if (audioCtx.state === "suspended") audioCtx.resume();
     return audioCtx;
   }
@@ -723,7 +736,7 @@
 
   el.trackVolume.addEventListener("input", () => {
     state.trackVolume = Number(el.trackVolume.value) / 100;
-    el.audio.volume = state.trackVolume;
+    if (trackGain) trackGain.gain.value = state.trackVolume;
     el.trackVolumeValue.textContent = el.trackVolume.value + "%";
   });
 

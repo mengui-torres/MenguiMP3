@@ -502,19 +502,33 @@
   // volume control on every platform, and both sounds sharing one output.
   let audioCtx = null;
   let trackGain = null;
+  let masterBus = null; // shared compressor both track and click pass through
   let clickNoiseBuffer = null;
   function ensureAudioCtx() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      // A limiter on the shared output lets the click hit much harder than
+      // unity gain without clipping — it also makes the track duck ever so
+      // slightly at the exact instant of each click (like a sidechain),
+      // which is what actually makes a click cut through a full mix.
+      masterBus = audioCtx.createDynamicsCompressor();
+      masterBus.threshold.value = -8;
+      masterBus.knee.value = 6;
+      masterBus.ratio.value = 12;
+      masterBus.attack.value = 0.003;
+      masterBus.release.value = 0.15;
+      masterBus.connect(audioCtx.destination);
+
       const trackSource = audioCtx.createMediaElementSource(el.audio);
       trackGain = audioCtx.createGain();
       trackGain.gain.value = state.trackVolume;
-      trackSource.connect(trackGain).connect(audioCtx.destination);
+      trackSource.connect(trackGain).connect(masterBus);
 
       // A short burst of filtered noise reads as a percussive "tick" that
       // cuts through a full mix; a pure tone (the previous approach) has
       // all its energy at one frequency and gets buried under real music.
-      const bufferSize = Math.round(audioCtx.sampleRate * 0.05);
+      const bufferSize = Math.round(audioCtx.sampleRate * 0.06);
       clickNoiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
       const data = clickNoiseBuffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
@@ -527,22 +541,25 @@
     if (state.metro.clickVolume <= 0 || state.metro.muted) return;
     const ctx = ensureAudioCtx();
     const now = ctx.currentTime;
-    const duration = 0.035;
-    const peak = (accent ? 1 : 0.7) * state.metro.clickVolume;
+    const duration = 0.045;
+    // Above unity on purpose — the limiter on masterBus catches it, and a
+    // sharper, higher-pitched click (little musical content lives up here)
+    // cuts through far better than a lower, gentler one.
+    const peak = (accent ? 1.8 : 1.2) * state.metro.clickVolume;
 
     const noise = ctx.createBufferSource();
     noise.buffer = clickNoiseBuffer;
 
     const bandpass = ctx.createBiquadFilter();
     bandpass.type = "bandpass";
-    bandpass.frequency.value = accent ? 2400 : 1600;
-    bandpass.Q.value = 1;
+    bandpass.frequency.value = accent ? 5200 : 3600;
+    bandpass.Q.value = 2.5;
 
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(peak, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
-    noise.connect(bandpass).connect(gain).connect(ctx.destination);
+    noise.connect(bandpass).connect(gain).connect(masterBus);
     noise.start(now);
     noise.stop(now + duration);
   }

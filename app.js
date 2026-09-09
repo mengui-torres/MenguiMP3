@@ -189,11 +189,13 @@
     loopB: null,
     loopEnabled: false,
     playMode: "none", // "none" | "sequential" | "repeatSong"
+    trackVolume: 1,
     metro: {
       enabled: false,
       bpm: null,
       beatsPerMeasure: 4,
       tapTimes: [],
+      clickVolume: 0.8,
     },
   };
 
@@ -226,6 +228,10 @@
     metroBpmDown: document.getElementById("metroBpmDown"),
     metroBpmUp: document.getElementById("metroBpmUp"),
     metroBpmValue: document.getElementById("metroBpmValue"),
+    trackVolume: document.getElementById("trackVolume"),
+    trackVolumeValue: document.getElementById("trackVolumeValue"),
+    clickVolume: document.getElementById("clickVolume"),
+    clickVolumeValue: document.getElementById("clickVolumeValue"),
     playlistTabs: document.getElementById("playlistTabs"),
     activePlaylistName: document.getElementById("activePlaylistName"),
     renamePlaylistBtn: document.getElementById("renamePlaylistBtn"),
@@ -239,6 +245,7 @@
     el.seek, el.back10, el.back5, el.fwd5, el.fwd10, el.playPause,
     el.setA, el.setB, el.speed, el.modeSequential, el.modeRepeatSong,
     el.metroTap, ...document.querySelectorAll(".ts-btn"),
+    el.trackVolume, el.clickVolume,
   ];
 
   function formatTime(sec) {
@@ -429,6 +436,7 @@
     el.audio.src = state.objectUrl;
     setPreservesPitch(el.audio);
     el.audio.playbackRate = Number(el.speed.value) / 100;
+    el.audio.volume = state.trackVolume;
     el.songTitle.textContent = song.name;
 
     playerControls.forEach((c) => (c.disabled = false));
@@ -491,11 +499,13 @@
   }
 
   function playClick(accent) {
+    if (state.metro.clickVolume <= 0) return;
     const ctx = ensureAudioCtx();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.frequency.value = accent ? 1500 : 1000;
-    gain.gain.setValueAtTime(accent ? 0.35 : 0.2, ctx.currentTime);
+    const peak = (accent ? 0.9 : 0.6) * state.metro.clickVolume;
+    gain.gain.setValueAtTime(peak, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05);
     osc.connect(gain).connect(ctx.destination);
     osc.start();
@@ -709,6 +719,17 @@
       resyncMetro();
       updateMetroUI();
     });
+  });
+
+  el.trackVolume.addEventListener("input", () => {
+    state.trackVolume = Number(el.trackVolume.value) / 100;
+    el.audio.volume = state.trackVolume;
+    el.trackVolumeValue.textContent = el.trackVolume.value + "%";
+  });
+
+  el.clickVolume.addEventListener("input", () => {
+    state.metro.clickVolume = Number(el.clickVolume.value) / 100;
+    el.clickVolumeValue.textContent = el.clickVolume.value + "%";
   });
 
   // ---------- Events: speed ----------
